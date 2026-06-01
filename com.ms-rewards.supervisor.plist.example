@@ -8,7 +8,7 @@
     <array>
         <string>/FULL/PATH/TO/ms-rewards/scripts/supervisor.sh</string>
     </array>
-    <!-- Poll every 10 minutes while logged in; starts run.sh when Mac is in use -->
+    <!-- Poll every 10 minutes; starts run.sh once per day in the background while logged in -->
     <key>StartInterval</key>
     <integer>600</integer>
     <key>StandardOutPath</key>

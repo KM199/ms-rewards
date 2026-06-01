@@ -203,7 +203,7 @@ Pick **one** mode. Do not load both LaunchAgents — you would get two runs per 
 | Mode | Best for | LaunchAgent |
 |------|----------|-------------|
 | **A. Fixed time** | Always-on Mac, run around 8:00 AM | `com.ms-rewards.daily.plist.example` |
-| **B. When you’re using the Mac** | Laptop / desktop you actually sit at | `com.ms-rewards.supervisor.plist.example` |
+| **B. While logged in (background)** | Laptop / desktop — runs once per day in the background | `com.ms-rewards.supervisor.plist.example` |
 
 Logs (both modes): `/tmp/ms-rewards-last.log` (run), `/tmp/ms-rewards-supervisor.log` (supervisor polls).
 
@@ -228,27 +228,18 @@ The Mac must be **awake** at 8:00 — if it’s asleep, launchd usually runs the
 
 ---
 
-### Mode B — When you’re using your Mac (recommended for friends)
+### Mode B — While logged in (background, recommended for friends)
 
-A small **supervisor** runs every **10 minutes** (while you’re logged in). The first time each day that:
+A **supervisor** runs every **10 minutes**. The first time each day that you’re **logged in** at the console and today’s run hasn’t finished, it starts `./run.sh` **in the background** (no morning jitter, no need to be at the keyboard).
 
-- you’re logged in at the console,
-- the display is on,
-- you’ve used the keyboard/mouse recently (default: within **10 minutes**),
-- today’s run hasn’t finished yet,
-
-…it starts `./run.sh` in the background (no extra morning jitter).
-
-Good for people who don’t leave a headless server on 24/7 — it runs while the computer is actually in use.
+You can keep working, watching video, or walk away — Chromium runs headless by default. The only hard requirement is a normal GUI login session (not stuck at the login screen).
 
 **1. Optional tuning in `.env`**
 
 ```env
-SUPERVISOR_MAX_IDLE_SECONDS=600   # “in use” = idle less than 10 min
-SUPERVISOR_REQUIRE_DISPLAY_ON=1
 SUPERVISOR_EARLIEST_HOUR=8        # optional: don’t start before 8:00
 SUPERVISOR_LATEST_HOUR=23         # optional: don’t start after 23:00
-SUPERVISOR_MIN_UPTIME_SEC=120     # wait 2 min after wake/boot
+SUPERVISOR_MIN_UPTIME_SEC=120     # wait 2 min after boot before first start
 ```
 
 **2. Install the supervisor LaunchAgent**
@@ -270,7 +261,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.YOURNAME.ms-rewards.
 ./scripts/supervisor.sh --status
 ```
 
-Example: `SKIP: user idle 2400s > max 600s` or `WOULD START: console=kai idle=42s`.
+Example: `SKIP: already completed today` or `WOULD START: console=jane uptime=3600s`.
 
 **State files** (gitignored under `var/`):
 
@@ -279,14 +270,14 @@ Example: `SKIP: user idle 2400s > max 600s` or `WOULD START: console=kai idle=42
 | `var/state.json` | `lastCompletedDate` — at most one successful run per day |
 | `var/run.lock` | PID while `run.sh` is running |
 
-**Headed browser:** For interactive Macs, set `"headless": false` in `config.json` if you want to see the browser; `true` still works unattended.
+Use `"headless": true` in `config.json` (default) so the job stays invisible in the background.
 
 ---
 
 ### Linux / Windows
 
 - **Fixed time:** cron / Task Scheduler → `./run.sh` or `./run-now.sh`
-- **When in use:** run `scripts/supervisor.sh` every 10–15 minutes while logged in (supervisor is macOS-only today; Linux would need different idle checks)
+- **While logged in:** run `scripts/supervisor.sh` every 10–15 minutes (macOS-only today)
 
 ---
 

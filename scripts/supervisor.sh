@@ -1,5 +1,6 @@
 #!/bin/bash
-# Run at most one MS Rewards job per calendar day when the Mac is awake and in use.
+# Start at most one MS Rewards run per calendar day while someone is logged in.
+# Runs in the background via run.sh — no keyboard/mouse activity required.
 # Install via com.ms-rewards.supervisor.plist.example (StartInterval ~10 min).
 #
 # Usage:
@@ -14,7 +15,6 @@ ENV_FILE="$SCRIPT_DIR/.env"
 VAR_DIR="$SCRIPT_DIR/var"
 STATE_FILE="$VAR_DIR/state.json"
 LOCK_FILE="$VAR_DIR/run.lock"
-LOG_FILE="/tmp/ms-rewards-supervisor.log"
 
 DRY=0
 for arg in "$@"; do
@@ -34,9 +34,6 @@ if [ -f "$ENV_FILE" ]; then
     set +a
 fi
 
-# --- config (override in .env) ---
-MAX_IDLE_SEC="${SUPERVISOR_MAX_IDLE_SECONDS:-600}"
-REQUIRE_DISPLAY_ON="${SUPERVISOR_REQUIRE_DISPLAY_ON:-1}"
 EARLIEST_HOUR="${SUPERVISOR_EARLIEST_HOUR:-}"
 LATEST_HOUR="${SUPERVISOR_LATEST_HOUR:-}"
 MIN_UPTIME_SEC="${SUPERVISOR_MIN_UPTIME_SEC:-120}"
@@ -62,20 +59,6 @@ console_user() {
     stat -f%Su /dev/console 2>/dev/null || echo ""
 }
 
-user_idle_seconds() {
-    local idle_ns
-    idle_ns=$(ioreg -c IOHIDSystem 2>/dev/null | awk '/HIDIdleTime/ {print $NF; exit}')
-    [ -z "$idle_ns" ] && echo 999999 && return
-    echo $((idle_ns / 1000000000))
-}
-
-display_is_on() {
-    # IOPowerManagement DevicePowerState: 4 ≈ display on
-    local state
-    state=$(ioreg -n IODisplayWrangler -r 2>/dev/null | awk '/DevicePowerState/ {print $3; exit}' | tr -d ',')
-    [ "$state" = "4" ] || [ "$state" = "0" ]
-}
-
 system_uptime_seconds() {
     if [ "$(uname -s)" = "Darwin" ]; then
         local boot
@@ -89,16 +72,16 @@ system_uptime_seconds() {
 }
 
 within_hour_window() {
-  local h
-  h=$(date +%H | sed 's/^0//')
-  [ -z "$h" ] && h=0
-  if [ -n "$EARLIEST_HOUR" ] && [ "$h" -lt "$EARLIEST_HOUR" ]; then
-    return 1
-  fi
-  if [ -n "$LATEST_HOUR" ] && [ "$h" -gt "$LATEST_HOUR" ]; then
-    return 1
-  fi
-  return 0
+    local h
+    h=$(date +%H | sed 's/^0//')
+    [ -z "$h" ] && h=0
+    if [ -n "$EARLIEST_HOUR" ] && [ "$h" -lt "$EARLIEST_HOUR" ]; then
+        return 1
+    fi
+    if [ -n "$LATEST_HOUR" ] && [ "$h" -gt "$LATEST_HOUR" ]; then
+        return 1
+    fi
+    return 0
 }
 
 lock_pid() {
@@ -122,7 +105,7 @@ evaluate() {
     REASON_OK=""
 
     if [ "$(uname -s)" != "Darwin" ]; then
-        REASON_SKIP="macOS only (supervisor uses IOKit idle/display checks)"
+        REASON_SKIP="macOS only"
         return 1
     fi
 
@@ -151,7 +134,7 @@ evaluate() {
     local uptime
     uptime=$(system_uptime_seconds)
     if [ "$uptime" -lt "$MIN_UPTIME_SEC" ]; then
-        REASON_SKIP="system uptime ${uptime}s < ${MIN_UPTIME_SEC}s (just woke?)"
+        REASON_SKIP="system uptime ${uptime}s < ${MIN_UPTIME_SEC}s (just booted)"
         return 1
     fi
 
@@ -160,26 +143,14 @@ evaluate() {
         return 1
     fi
 
-    if [ "$REQUIRE_DISPLAY_ON" = "1" ] && ! display_is_on; then
-        REASON_SKIP="display appears off / asleep"
-        return 1
-    fi
-
-    local idle
-    idle=$(user_idle_seconds)
-    if [ "$idle" -gt "$MAX_IDLE_SEC" ]; then
-        REASON_SKIP="user idle ${idle}s > max ${MAX_IDLE_SEC}s (not using Mac right now)"
-        return 1
-    fi
-
-    REASON_OK="console=$user idle=${idle}s uptime=${uptime}s"
+    REASON_OK="console=$user uptime=${uptime}s — will run in background"
     return 0
 }
 
 start_run() {
     mkdir -p "$VAR_DIR"
     local run_log="/tmp/ms-rewards-last.log"
-    log "Starting run.sh (SKIP_DELAY=1) → $run_log"
+    log "Starting run.sh in background (SKIP_DELAY=1) → $run_log"
     (
         cd "$SCRIPT_DIR"
         export SKIP_DELAY=1
