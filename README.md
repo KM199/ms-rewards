@@ -83,10 +83,11 @@ Never commit `accounts.json` — it is gitignored.
 | `searchSettings.searchDelay` | `3sec` – `10sec` | Time on the results page after each query |
 | `searchSettings.parallelSearching` | `true` | Mobile + desktop at the same time |
 
-If searches run but points barely move, **increase** `betweenSearchDelay` (e.g. `2min`–`8min`). After a run, check the log for:
+Tune `betweenSearchDelay` using telemetry in `/tmp/ms-rewards-last.log`:
 
 ```text
 SEARCH-RATE-SUMMARY | attempts=18 | credited=18 | hitRate=100.0%
+SEARCH-RATE-BUCKET | preDelay=2m-5m | attempts=8 | credited=8 | hitRate=100.0%
 ```
 
 ### Browser
@@ -197,6 +198,8 @@ Or run a full job: `./run-now.sh` — you’ll get a message when it finishes.
 
 ## Daily schedule (macOS)
 
+macOS automation: install deps, configure accounts, optional Telegram, then schedule `run.sh` via launchd.
+
 **1. Copy and edit the LaunchAgent template**
 
 ```bash
@@ -226,6 +229,8 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.YOURNAME.ms-rewards.
 | `/tmp/ms-rewards-launchagent.log` | launchd stdout/stderr |
 
 **Mac must be awake** at run time — sleep pauses launchd. Use Energy Saver / `caffeinate` if needed.
+
+`StartCalendarInterval` fires at a fixed clock time; `run.sh` adds random delay inside the job. Wake/idle-based scheduling needs a separate supervisor (not included).
 
 ### Linux / Windows
 
@@ -265,6 +270,18 @@ Environment:
 | **Parallel searches** | `Promise.allSettled` for mobile + desktop |
 | **Browser** | Headless with headed fallback |
 | **Sessions** | `run.sh` backs up cookies across `npm run build` |
+
+### Log tags
+
+| Tag | Meaning |
+|-----|---------|
+| `FLOW-STEP` / `FLOW-SUMMARY` | Per-step OK / FAIL / SKIP; failed steps listed at end of account |
+| `SEARCH-BING-TIMING` | `preDelay`, `sinceLastCredit`, `credited=yes\|no` per query |
+| `SEARCH-RATE-SUMMARY` | Hit rate and average delay for the search phase |
+| `SEARCH-RATE-BUCKET` | Hit rate grouped by wait-time bucket |
+| `RUN-END` | Total points collected and runtime |
+
+`src/accounts.json` and `src/config.json` are gitignored — never commit them.
 
 ---
 
