@@ -6,7 +6,7 @@
     <string>com.kai.ms-rewards</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/kai/.openclaw/workspace/brain2/scripts/ms-rewards/run.sh</string>
+        <string>/Users/kai/.openclaw/workspace/ms-rewards/run.sh</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
