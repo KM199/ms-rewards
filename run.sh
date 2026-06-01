@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_FILE="/tmp/ms-rewards-last.log"
+ENV_FILE="$SCRIPT_DIR/.env"
 KCLAW_DIR="$HOME/kclaw"
 
 cd "$SCRIPT_DIR"
@@ -41,19 +42,27 @@ EXIT_CODE=${PIPESTATUS[0]}
 
 echo "[run.sh] Run finished at $(date) (exit $EXIT_CODE)" | tee -a "$LOG_FILE"
 
-# Send Telegram notification via kclaw (non-fatal)
-if [ -f "$KCLAW_DIR/.env" ] && [ -f "$KCLAW_DIR/scripts/push-ms-rewards-report.js" ]; then
+# Telegram summary (non-fatal) — see README; needs .env in repo root
+NOTIFY_SCRIPT="$SCRIPT_DIR/scripts/push-run-report.mjs"
+if [ -f "$NOTIFY_SCRIPT" ]; then
     set +e
-    node --env-file="$KCLAW_DIR/.env" "$KCLAW_DIR/scripts/push-ms-rewards-report.js" "$LOG_FILE"
+    if [ -f "$ENV_FILE" ]; then
+        node --env-file="$ENV_FILE" "$NOTIFY_SCRIPT" "$LOG_FILE"
+    elif [ -f "$KCLAW_DIR/.env" ]; then
+        # Legacy: Kai-style kclaw .env (TELEGRAM_TOKEN + NOTIFY_CHAT_ID)
+        node --env-file="$KCLAW_DIR/.env" "$NOTIFY_SCRIPT" "$LOG_FILE"
+    else
+        node "$NOTIFY_SCRIPT" "$LOG_FILE" 2>/dev/null
+    fi
     TG_EXIT=$?
     set -e
     if [ "$TG_EXIT" -eq 0 ]; then
         echo "[run.sh] Telegram notification sent"
+    elif [ "$TG_EXIT" -eq 1 ] && { [ -f "$ENV_FILE" ] || [ -f "$KCLAW_DIR/.env" ]; }; then
+        echo "[run.sh] Telegram notification failed (exit $TG_EXIT) — check .env"
     else
-        echo "[run.sh] Telegram notification failed (exit $TG_EXIT)"
+        echo "[run.sh] Telegram skipped (copy .env.example → .env to enable)"
     fi
-else
-    echo "[run.sh] kclaw not found, skipping Telegram notification"
 fi
 
 exit $EXIT_CODE
