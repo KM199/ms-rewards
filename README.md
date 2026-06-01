@@ -17,7 +17,6 @@ Automated Microsoft Rewards daily tasks. Fork of [TheNetsky/Microsoft-Rewards-Sc
 7. [Daily schedule (macOS)](#daily-schedule-macos)
 8. [Commands reference](#commands-reference)
 9. [Fork features](#fork-features)
-10. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -266,29 +265,6 @@ Environment:
 | **Parallel searches** | `Promise.allSettled` for mobile + desktop |
 | **Browser** | Headless with headed fallback |
 | **Sessions** | `run.sh` backs up cookies across `npm run build` |
-
----
-
-## Troubleshooting
-
-| Symptom | Fix |
-|---------|-----|
-| Exits in ~3s, Chromium “doesn't exist” | `npx patchright install chromium` or use `./run.sh` |
-| Searches run, almost no points | Raise `betweenSearchDelay`; read `SEARCH-RATE-BUCKET` in log |
-| No Telegram | Check `.env`, run `npm run telegram:chat-id`, then `npm run notify` |
-| Telegram “chat not found” | Wrong `TELEGRAM_CHAT_ID` — message the bot again, re-run chat-id |
-| Login loops | Delete `dist/browser/sessions/<email>/`, fix password/`totpSecret`, rerun |
-| Daily set incomplete | `npm run build`; check log for `URL-REWARD` / `DAILY-SET` |
-| Run many hours | Normal with long search delays; lower max delay once hit rate is stable |
-
-### Log tags
-
-| Tag | Meaning |
-|-----|---------|
-| `FLOW-STEP` | Per-step OK / FAIL / SKIP |
-| `FLOW-SUMMARY` | Failed steps at end of account |
-| `SEARCH-BING-TIMING` | Per-search delay and credit yes/no |
-| `RUN-END` | Total points and runtime |
 
 ---
 
