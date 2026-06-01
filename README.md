@@ -1,271 +1,182 @@
-[![Discord](https://img.shields.io/badge/Join%20Our%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/8BxYbV4pkj)
-[![Latest Build](https://img.shields.io/github/actions/workflow/status/TheNetsky/Microsoft-Rewards-Script/auto-release.yml?branch=v3&style=for-the-badge&label=Latest%20Build)](https://github.com/TheNetsky/Microsoft-Rewards-Script/actions/workflows/auto-release.yml)
-[![Docker](https://img.shields.io/badge/Docker-GHCR-blue?style=for-the-badge&logo=docker)](https://github.com/TheNetsky/Microsoft-Rewards-Script/pkgs/container/microsoft-rewards-script)
+# ms-rewards
 
-> [!CAUTION]
-> V3.x does not support the new Bing Rewards interface!
->
-> Use at your own risk — some features may not work as expected.
+Automated Microsoft Rewards daily tasks for **macOS** (and other platforms supported by the upstream script). Fork of [TheNetsky/Microsoft-Rewards-Script](https://github.com/TheNetsky/Microsoft-Rewards-Script) **v3.1.4** with fixes and scheduling aimed at reliable unattended daily runs.
 
----
+> **Disclaimer:** Automating Rewards may violate Microsoft’s terms. Accounts can be limited or banned. Use at your own risk.
 
-## Table of Contents
+## What this fork changes
 
-- [Quick Setup](#quick-setup)
-- [Nix Setup](#nix-setup)
-- [Configuration Options](#configuration-options)
-- [Account Setup](#account-setup)
-- [Troubleshooting](#troubleshooting)
-- [Disclaimer](#disclaimer)
+| Area | Behavior |
+|------|----------|
+| **Daily set** | Url-reward tiles use the `reportactivity` API first (not legacy in-page quiz selectors). |
+| **Resilient flow** | Each major step runs in isolation (`FLOW-STEP`). Login/browser failure stops the account; other failures are logged and the run continues. |
+| **Search pacing** | Random wait **before** each Bing search (`betweenSearchDelay`). Short dwell on the results page (`searchDelay`). |
+| **Search telemetry** | Logs `SEARCH-BING-TIMING`, `SEARCH-RATE-SUMMARY`, and `SEARCH-RATE-BUCKET` to tune delays vs hit rate. |
+| **100 pt banner** | Optional worker `doLimitedSearchBonus` (“No joke: Get 100 points/day”) runs after normal searches. |
+| **Parallel searches** | Mobile and desktop use `Promise.allSettled`; one side failing does not kill the other. |
+| **Browser** | Headless launch falls back to headed Chromium if the headless binary is missing. |
+| **macOS runner** | `run.sh` installs Chromium if needed, preserves login sessions across `npm run build`, optional LaunchAgent plist. |
 
----
+Upstream Docker/Nix paths still exist; **day-to-day development and scheduling on Mac are documented below.**
 
-## Quick Setup
+## Requirements
 
-### Bare metal
+- **Node.js ≥ 24**
+- **npm**
+- Enough disk for Patchright Chromium (~250 MB in `~/Library/Caches/ms-playwright/` on Mac)
 
-**Requirements:** Node.js >= 24 and Git  
-Works on Windows, Linux, macOS, and WSL.
-
-#### Get the script
+## Quick start
 
 ```bash
-git clone https://github.com/TheNetsky/Microsoft-Rewards-Script.git
-cd Microsoft-Rewards-Script
-```
+git clone git@github.com:KM199/ms-rewards.git
+cd ms-rewards
 
-Or, download the latest release ZIP and extract it.
+npm install
+npx patchright install chromium
 
-#### Create an account.json and config.json
+cp src/accounts.example.json src/accounts.json
+cp src/config.example.json src/config.json
+# Edit both files — never commit them (they are gitignored).
 
-Copy, rename, and edit your account and configuration files before deploying the script.
-
-- Copy or rename `src/accounts.example.json` to `src/accounts.json` and add your credentials
-- Copy or rename `src/config.example.json` to `src/config.json` and customize your preferences.
-
-> [!CAUTION]
-> Do not skip this step.
-> Prior versions of accounts.json and config.json are not compatible with current release.
-
-> [!WARNING]
-> You must rebuild your script after making any changes to accounts.json and config.json.
-
-#### Build and run the script (bare metal version)
-
-```bash
-npm run pre-build
 npm run build
-npm run start
+./run-now.sh
 ```
 
-### Docker
+**First run:** logs in via the browser, saves sessions under `dist/browser/sessions/<email>/`. Later runs reuse those cookies when possible.
 
-- Copy the sample [`compose.yaml`](compose.yaml)
-- Copy and rename [`env.example`](env.example) to `.env` and add your account credentials:
+## How to run
 
-```env
-ACCOUNT_1_EMAIL=you@example.com
-ACCOUNT_1_PASSWORD=your_password
+| Command | Use when |
+|---------|----------|
+| `./run-now.sh` | Manual run immediately (no 0–60 minute random delay). |
+| `./run.sh` | Same as LaunchAgent: optional random delay, build, run, log to `/tmp/ms-rewards-last.log`. |
+| `npm run start` | Node only (no build, no delay, no session backup in wrapper). |
+| `npm run build` | Compile TypeScript to `dist/` after code or config changes. |
+
+`run.sh` also tries to send a Telegram summary if `~/kclaw/scripts/push-ms-rewards-report.js` exists (optional; safe to ignore).
+
+## macOS daily schedule (LaunchAgent)
+
+1. Edit `com.kai.ms-rewards.plist`: set `HOME`, and the full path to `run.sh` on your machine.
+2. Install:
+
+```bash
+cp com.kai.ms-rewards.plist ~/Library/LaunchAgents/
+launchctl unload ~/Library/LaunchAgents/com.kai.ms-rewards.plist 2>/dev/null || true
+launchctl load ~/Library/LaunchAgents/com.kai.ms-rewards.plist
 ```
 
-> [!NOTE]
-> A valid `accounts.json` is automatically created based on these values, and saved locally to `./config/`
+Default: **8:00 AM** local, then `run.sh` sleeps **0–60 minutes** at random before starting (spreads load ~8:00–9:00).
 
-- Review `compose.yaml` to adjust scheduling, timezone, and config options.
+Logs:
 
-> [!NOTE]
-> A valid `config.json` is auto-generated on first run using default values, and saved locally to `./config/`.
-> Optionally, use `CONFIG_*` variables in the `environment:` section of the `compose.yaml` to customise your options (e.g., clusters, webhook).
-> Commonly changed values are included in the sample `compose.yaml`, and a full list of configuration options are in [the table below](#configuration-options).
-> Custom config values set in the `compose.yaml` are applied on every startup and always take precedence over `./config/config.json`.
+- `/tmp/ms-rewards-last.log` — latest run (also used by `run.sh`)
+- `/tmp/ms-rewards-launchagent.log` — LaunchAgent stdout/stderr
 
-> [!TIP]
-> If a new image adds config options you're missing, a warning will appear in the container logs.
-> To update, delete `./config/config.json` and restart, a fresh one will be generated from the latest example, with your `compose.yaml` overrides re-applied.
+## Configuration
 
-- Start the container: `docker compose up -d`
-
-> [!TIP]
-> Monitor logs with `docker logs microsoft-rewards-script`, useful for viewing passwordless login codes or diagnosing issues.
-> You can also enable a webhook in `compose.yaml` for notifications.
-
----
-
-## Nix Setup
-
-If using Nix: `bash scripts/nix/run.sh`
-
----
-
-## Configuration Options
-
-Edit `config.json` to customize behavior, or set `CONFIG_*` environment variables in `compose.yaml` (Docker). Below are all currently available options.
-
-> [!WARNING]
-> Rebuild the script (bare metal), or recreate the container (Docker) after all config changes.
-
-### Core
-
-| Setting                    | Type    | Default                      | Description                           | Docker environment variable   |
-| -------------------------- | ------- | ---------------------------- | ------------------------------------- | ----------------------------- |
-| `baseURL`                  | string  | `"https://rewards.bing.com"` | Microsoft Rewards base URL            |                               |
-| `sessionPath`              | string  | `"sessions"`                 | Directory to store browser sessions   |                               |
-| `headless`                 | boolean | `false`                      | Run browser invisibly                 | Always `true` in Docker       |
-| `clusters`                 | number  | `1`                          | Number of concurrent account clusters | `CONFIG_CLUSTERS`             |
-| `errorDiagnostics`         | boolean | `false`                      | Enable error diagnostics              | `CONFIG_ERROR_DIAGNOSTICS`    |
-| `searchOnBingLocalQueries` | boolean | `false`                      | Use local query list                  | `CONFIG_SEARCH_ON_BING_LOCAL` |
-| `globalTimeout`            | string  | `"30sec"`                    | Timeout for all actions               | `CONFIG_GLOBAL_TIMEOUT`       |
+Copy `src/config.example.json` → `src/config.json`. Important fields for this fork:
 
 ### Workers
 
-| Setting                       | Type    | Default | Description                 | Docker environment variable        |
-| ----------------------------- | ------- | ------- | --------------------------- | ---------------------------------- |
-| `workers.doDailySet`          | boolean | `true`  | Complete daily set          | `CONFIG_WORKER_DAILY_SET`          |
-| `workers.doSpecialPromotions` | boolean | `true`  | Complete special promotions | `CONFIG_WORKER_SPECIAL_PROMOTIONS` |
-| `workers.doMorePromotions`    | boolean | `true`  | Complete more promotions    | `CONFIG_WORKER_MORE_PROMOTIONS`    |
-| `workers.doPunchCards`        | boolean | `true`  | Complete punchcards         | `CONFIG_WORKER_PUNCH_CARDS`        |
-| `workers.doAppPromotions`     | boolean | `true`  | Complete app promotions     | `CONFIG_WORKER_APP_PROMOTIONS`     |
-| `workers.doDesktopSearch`     | boolean | `true`  | Perform desktop searches    | `CONFIG_WORKER_DESKTOP_SEARCH`     |
-| `workers.doMobileSearch`      | boolean | `true`  | Perform mobile searches     | `CONFIG_WORKER_MOBILE_SEARCH`      |
-| `workers.doDailyCheckIn`      | boolean | `true`  | Complete daily check-in     | `CONFIG_WORKER_DAILY_CHECKIN`      |
-| `workers.doReadToEarn`        | boolean | `true`  | Complete Read-to-Earn       | `CONFIG_WORKER_READ_TO_EARN`       |
+All default `true` in the example. Set `false` to skip a task.
 
-### Search Settings
+| Key | Description |
+|-----|-------------|
+| `workers.doDailySet` | Daily set tiles (API + browser fallback). |
+| `workers.doDesktopSearch` / `doMobileSearch` | Bing search points (separate caps). |
+| `workers.doLimitedSearchBonus` | “100 points/day” tagged search offer. |
+| `workers.doReadToEarn` | Read-to-earn articles. |
+| `workers.doMorePromotions` / `doPunchCards` / … | Other dashboard tasks. |
 
-| Setting                                | Type     | Default                                      | Description                         | Docker environment variable    |
-| -------------------------------------- | -------- | -------------------------------------------- | ----------------------------------- | ------------------------------ |
-| `searchSettings.scrollRandomResults`   | boolean  | `false`                                      | Scroll randomly on results          | `CONFIG_SEARCH_SCROLL_RANDOM`  |
-| `searchSettings.clickRandomResults`    | boolean  | `false`                                      | Click random links                  | `CONFIG_SEARCH_CLICK_RANDOM`   |
-| `searchSettings.parallelSearching`     | boolean  | `true`                                       | Run searches in parallel            | `CONFIG_SEARCH_PARALLEL`       |
-| `searchSettings.queryEngines`          | string[] | `["google", "wikipedia", "reddit", "local"]` | Query engines to use                |                                |
-| `searchSettings.searchResultVisitTime` | string   | `"10sec"`                                    | Time to spend on each search result | `CONFIG_SEARCH_VISIT_TIME`     |
-| `searchSettings.searchDelay.min`       | string   | `"30sec"`                                    | Minimum delay between searches      | `CONFIG_SEARCH_DELAY_MIN`      |
-| `searchSettings.searchDelay.max`       | string   | `"1min"`                                     | Maximum delay between searches      | `CONFIG_SEARCH_DELAY_MAX`      |
-| `searchSettings.readDelay.min`         | string   | `"30sec"`                                    | Minimum delay for reading           | `CONFIG_SEARCH_READ_DELAY_MIN` |
-| `searchSettings.readDelay.max`         | string   | `"1min"`                                     | Maximum delay for reading           | `CONFIG_SEARCH_READ_DELAY_MAX` |
+### Search timing (read this)
 
-### Logging
+| Key | Default (example) | Meaning |
+|-----|-------------------|---------|
+| `searchSettings.betweenSearchDelay` | `30sec` – `15min` | **Random wait before each search.** Main lever for Bing crediting searches. Too short (~30s–1min) → most searches earn 0 points; ~2–15min between credits is typical. |
+| `searchSettings.searchDelay` | `3sec` – `10sec` | Wait on the results page after submitting a query, before reading counters. |
+| `searchSettings.parallelSearching` | `true` | Mobile + desktop searches at the same time (faster, more load). |
+| `searchSettings.queryEngines` | google, wikipedia, reddit, local | Where search queries are sourced. |
 
-| Setting                          | Type     | Default                | Description                       | Docker environment variable    |
-| -------------------------------- | -------- | ---------------------- | --------------------------------- | ------------------------------ |
-| `debugLogs`                      | boolean  | `false`                | Enable debug logging              | `CONFIG_DEBUG_LOGS`            |
-| `consoleLogFilter.enabled`       | boolean  | `false`                | Enable console log filtering      | `CONFIG_LOG_FILTER_ENABLED`    |
-| `consoleLogFilter.mode`          | string   | `"whitelist"`          | Filter mode (whitelist/blacklist) | `CONFIG_LOG_FILTER_MODE`       |
-| `consoleLogFilter.levels`        | string[] | `["error", "warn"]`    | Log levels to filter              | `CONFIG_LOG_FILTER_LEVELS`\*   |
-| `consoleLogFilter.keywords`      | string[] | `["starting account"]` | Keywords to filter                | `CONFIG_LOG_FILTER_KEYWORDS`\* |
-| `consoleLogFilter.regexPatterns` | string[] | `[]`                   | Regex patterns for filtering      |                                |
+Tune `betweenSearchDelay` using end-of-run lines like:
 
-> [!NOTE] \* Docker `CONFIG_*` array values are comma-separated strings e.g. `"error,warn"`
-> Regex pattenrs must be entered directly in the `config.yaml`
+```text
+SEARCH-RATE-SUMMARY | attempts=18 | credited=18 | hitRate=100.0% | avgPreDelay=6m26s
+SEARCH-RATE-BUCKET | preDelay=2m-5m | attempts=8 | credited=8 | hitRate=100.0%
+```
 
-### Proxy
+### Browser
 
-| Setting             | Type    | Default | Description                 | Docker environment variable |
-| ------------------- | ------- | ------- | --------------------------- | --------------------------- |
-| `proxy.queryEngine` | boolean | `true`  | Proxy query engine requests | `CONFIG_PROXY_QUERY_ENGINE` |
+| Key | Notes |
+|-----|--------|
+| `headless` | `true` for unattended Mac; script retries headed if headless binary is missing. |
+| `sessionPath` | Relative to `dist/browser/`; sessions hold cookies (+ optional fingerprints). |
 
-### Webhooks
+## Accounts
 
-| Setting                                  | Type     | Default                                              | Description                       | Docker environment variable             |
-| ---------------------------------------- | -------- | ---------------------------------------------------- | --------------------------------- | --------------------------------------- |
-| `webhook.discord.enabled`                | boolean  | `false`                                              | Enable Discord webhook            | `CONFIG_DISCORD_ENABLED`                |
-| `webhook.discord.url`                    | string   | `""`                                                 | Discord webhook URL               | `CONFIG_DISCORD_URL`                    |
-| `webhook.ntfy.enabled`                   | boolean  | `false`                                              | Enable ntfy notifications         | `CONFIG_NTFY_ENABLED`                   |
-| `webhook.ntfy.url`                       | string   | `""`                                                 | ntfy server URL                   | `CONFIG_NTFY_URL`                       |
-| `webhook.ntfy.topic`                     | string   | `""`                                                 | ntfy topic                        | `CONFIG_NTFY_TOPIC`                     |
-| `webhook.ntfy.token`                     | string   | `""`                                                 | ntfy authentication token         | `CONFIG_NTFY_TOKEN`                     |
-| `webhook.ntfy.title`                     | string   | `"Microsoft-Rewards-Script"`                         | Notification title                | `CONFIG_NTFY_TITLE`                     |
-| `webhook.ntfy.tags`                      | string[] | `["bot", "notify"]`                                  | Notification tags                 | `CONFIG_NTFY_TAGS` \*                   |
-| `webhook.ntfy.priority`                  | number   | `3`                                                  | Notification priority (1-5)       | `CONFIG_NTFY_PRIORITY`                  |
-| `webhook.webhookLogFilter.enabled`       | boolean  | `false`                                              | Enable webhook log filtering      | `CONFIG_WEBHOOK_LOG_FILTER_ENABLED`     |
-| `webhook.webhookLogFilter.mode`          | string   | `"whitelist"`                                        | Filter mode (whitelist/blacklist) | `CONFIG_WEBHOOK_LOG_FILTER_MODE`        |
-| `webhook.webhookLogFilter.levels`        | string[] | `["error"]`                                          | Log levels to send                | `CONFIG_WEBHOOK_LOG_FILTER_LEVELS` \*   |
-| `webhook.webhookLogFilter.keywords`      | string[] | `["starting account", "select number", "collected"]` | Keywords to filter                | `CONFIG_WEBHOOK_LOG_FILTER_KEYWORDS` \* |
-| `webhook.webhookLogFilter.regexPatterns` | string[] | `[]`                                                 | Regex patterns for filtering      |                                         |
-
-> [!NOTE] \* Docker `CONFIG_*` array values are comma-separated strings e.g. `"error,warn"`
-> Regex pattenrs must be entered directly in the `config.yaml`
-
-> [!WARNING]
-> **NTFY** users set the `webhookLogFilter` to `enabled`, or you will receive push notifications for _all_ logs.
-> When enabled, only account start, 2FA codes, and account completion summaries are delivered as push notifications.
-> Customize which notifications you receive with the `keywords` options.
-
----
-
-## Account Setup
-
-Edit `src/accounts.json`.
-
-> [!TIP]
-> Docker users can set account details directly in the `compose.yaml`, using a `.env` is recommended for sensitive information.
-> Docker will automatically create a valid `accounts.json` on container creation, and save the file in `./config/`
-
-> [!WARNING]
-> The file is a **flat array** of accounts, not `{ "accounts": [ ... ] }`.
-> Rebuild the script after all changes.
+Copy `src/accounts.example.json` → `src/accounts.json`. Flat JSON **array** of accounts:
 
 ```json
 [
-    {
-        "email": "email_1",
-        "password": "password_1",
-        "totpSecret": "",
-        "recoveryEmail": "",
-        "geoLocale": "auto",
-        "langCode": "en",
-        "proxy": {
-            "proxyAxios": false,
-            "url": "",
-            "port": 0,
-            "username": "",
-            "password": ""
-        },
-        "saveFingerprint": {
-            "mobile": false,
-            "desktop": false
-        }
-    },
-    {
-        "email": "email_2",
-        "password": "password_2",
-        "totpSecret": "",
-        "recoveryEmail": "",
-        "geoLocale": "auto",
-        "langCode": "en",
-        "proxy": {
-            "proxyAxios": false,
-            "url": "",
-            "port": 0,
-            "username": "",
-            "password": ""
-        },
-        "saveFingerprint": {
-            "mobile": false,
-            "desktop": false
-        }
-    }
+  {
+    "email": "you@outlook.com",
+    "password": "your_password",
+    "totpSecret": "",
+    "recoveryEmail": "",
+    "geoLocale": "auto",
+    "langCode": "en",
+    "proxy": { "proxyAxios": false, "url": "", "port": 0, "username": "", "password": "" },
+    "saveFingerprint": { "mobile": true, "desktop": true }
+  }
 ]
 ```
 
-> [!NOTE]
-> `geoLocale` uses the default locale of your Microsoft profile. You can overwrite it here with a custom locale.
+- **`totpSecret`:** TOTP secret for 2FA (optional).
+- **`saveFingerprint`:** `true` keeps a stable device profile between runs (recommended on Mac).
 
-> [!TIP]
-> When using 2FA login, adding your `totpSecret` will enable the script to automatically generate and enter the timed 6 digit code to login. To get your `totpSecret` in your Microsoft Security settings, click 'Manage how you sign in'. Add Authenticator app, when shown the QR code, select 'enter code manually'. Use this code in the `accounts.json`.
+## Log tags (troubleshooting)
 
----
+| Tag | Meaning |
+|-----|---------|
+| `FLOW-STEP` | `OK` / `FAIL` / `SKIP` per step (login, daily-set, searches, …). |
+| `FLOW-SUMMARY` | Failed steps at end of account. |
+| `SEARCH-BING-TIMING` | Per search: `preDelay`, `sinceLastCredit`, `credited=yes\|no`, query. |
+| `SEARCH-RATE-SUMMARY` | Hit rate and average delay for the search phase. |
+| `RUN-END` | Points collected and total runtime. |
 
-## Troubleshooting
+## Common issues
 
-> [!TIP]
-> Most login issues can be fixed by deleting your /sessions folder, and redeploying the script
+| Symptom | What to do |
+|---------|------------|
+| Run exits in ~3s, “Executable doesn't exist” (chromium_headless_shell) | `npx patchright install chromium` or run `./run.sh` (installs if missing). |
+| Searches run but almost no points | Increase `betweenSearchDelay` (e.g. `2min`–`8min`); check `SEARCH-RATE-BUCKET` in logs. |
+| Daily set incomplete | Look for `URL-REWARD` / `DAILY-SET` errors; run `node scripts/probe-daily-set-dom.mjs` after `npm run build`. |
+| Login loops | Delete `dist/browser/sessions/<email>/` and rerun; check password / `totpSecret`. |
+| Run takes many hours | Expected with long `betweenSearchDelay`; reduce max once hit rate is stable. |
 
----
+## Docker / Nix (upstream)
 
-## Disclaimer
+- **Docker:** see `compose.yaml` and `env.example` (upstream-style config generation).
+- **Nix:** `bash scripts/nix/run.sh`
 
-Use at your own risk.  
-Automation of Microsoft Rewards may lead to account suspension or bans.  
-This software is provided for educational purposes only.  
-The authors are not responsible for any actions taken by Microsoft.
+Behavior on Docker has not been re-validated for every fork-specific path; macOS + `run.sh` is the tested setup.
+
+## Project layout
+
+```text
+run.sh / run-now.sh     # macOS wrappers
+src/                    # TypeScript source
+src/config.json         # local config (gitignored)
+src/accounts.json       # credentials (gitignored)
+dist/                   # compiled output + browser sessions (gitignored)
+com.kai.ms-rewards.plist
+```
+
+## License
+
+GPL-3.0-or-later (same as upstream). See [LICENSE](LICENSE).
+
+## Upstream
+
+- Original project: https://github.com/TheNetsky/Microsoft-Rewards-Script  
+- This repo: https://github.com/KM199/ms-rewards
