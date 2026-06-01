@@ -42,6 +42,11 @@ EXIT_CODE=${PIPESTATUS[0]}
 
 echo "[run.sh] Run finished at $(date) (exit $EXIT_CODE)" | tee -a "$LOG_FILE"
 
+# Supervisor mode: record successful daily completion + release lock
+if [ -n "${MS_REWARDS_TRACK_DAILY:-}" ] && [ -x "$SCRIPT_DIR/scripts/mark-daily-complete.sh" ]; then
+    "$SCRIPT_DIR/scripts/mark-daily-complete.sh" "$EXIT_CODE" 2>&1 | tee -a "$LOG_FILE" || true
+fi
+
 # Telegram summary (non-fatal) — see README; needs .env in repo root
 NOTIFY_SCRIPT="$SCRIPT_DIR/scripts/push-run-report.mjs"
 if [ -f "$NOTIFY_SCRIPT" ]; then

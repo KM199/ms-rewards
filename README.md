@@ -14,7 +14,7 @@ Automated Microsoft Rewards daily tasks. Fork of [TheNetsky/Microsoft-Rewards-Sc
 4. [Config](#config)
 5. [First run](#first-run)
 6. [Telegram notifications](#telegram-notifications)
-7. [Daily schedule (macOS)](#daily-schedule-macos)
+7. [Scheduling (macOS)](#scheduling-macos)
 8. [Commands reference](#commands-reference)
 9. [Fork features](#fork-features)
 
@@ -196,46 +196,97 @@ Or run a full job: `./run-now.sh` — you’ll get a message when it finishes.
 
 ---
 
-## Daily schedule (macOS)
+## Scheduling (macOS)
 
-macOS automation: install deps, configure accounts, optional Telegram, then schedule `run.sh` via launchd.
+Pick **one** mode. Do not load both LaunchAgents — you would get two runs per day.
 
-**1. Copy and edit the LaunchAgent template**
+| Mode | Best for | LaunchAgent |
+|------|----------|-------------|
+| **A. Fixed time** | Always-on Mac, run around 8:00 AM | `com.ms-rewards.daily.plist.example` |
+| **B. When you’re using the Mac** | Laptop / desktop you actually sit at | `com.ms-rewards.supervisor.plist.example` |
+
+Logs (both modes): `/tmp/ms-rewards-last.log` (run), `/tmp/ms-rewards-supervisor.log` (supervisor polls).
+
+---
+
+### Mode A — Fixed time (8:00 AM + jitter)
+
+Same as the original setup: launchd fires once in the morning; `run.sh` sleeps **0–60 minutes** at random, then runs.
 
 ```bash
 cp com.ms-rewards.daily.plist.example ~/Library/LaunchAgents/com.YOURNAME.ms-rewards.plist
 ```
 
-Edit the plist:
-
-- `Label` → unique, e.g. `com.jane.ms-rewards`
-- `ProgramArguments` → **full path** to your `run.sh`
-- `HOME` → your macOS username path
-
-**2. Load it**
+Edit the plist: `Label`, full path to `run.sh`, and `HOME`.
 
 ```bash
 launchctl bootout gui/$(id -u)/com.YOURNAME.ms-rewards 2>/dev/null || true
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.YOURNAME.ms-rewards.plist
 ```
 
-**Default behavior:** fires at **8:00 AM**, then `run.sh` waits a **random 0–60 minutes** before starting (spreads load).
+The Mac must be **awake** at 8:00 — if it’s asleep, launchd usually runs the job after wake.
 
-**Logs**
+---
 
-| File | Contents |
-|------|----------|
-| `/tmp/ms-rewards-last.log` | Latest run (used for Telegram) |
-| `/tmp/ms-rewards-launchagent.log` | launchd stdout/stderr |
+### Mode B — When you’re using your Mac (recommended for friends)
 
-**Mac must be awake** at run time — sleep pauses launchd. Use Energy Saver / `caffeinate` if needed.
+A small **supervisor** runs every **10 minutes** (while you’re logged in). The first time each day that:
 
-`StartCalendarInterval` fires at a fixed clock time; `run.sh` adds random delay inside the job. Wake/idle-based scheduling needs a separate supervisor (not included).
+- you’re logged in at the console,
+- the display is on,
+- you’ve used the keyboard/mouse recently (default: within **10 minutes**),
+- today’s run hasn’t finished yet,
+
+…it starts `./run.sh` in the background (no extra morning jitter).
+
+Good for people who don’t leave a headless server on 24/7 — it runs while the computer is actually in use.
+
+**1. Optional tuning in `.env`**
+
+```env
+SUPERVISOR_MAX_IDLE_SECONDS=600   # “in use” = idle less than 10 min
+SUPERVISOR_REQUIRE_DISPLAY_ON=1
+SUPERVISOR_EARLIEST_HOUR=8        # optional: don’t start before 8:00
+SUPERVISOR_LATEST_HOUR=23         # optional: don’t start after 23:00
+SUPERVISOR_MIN_UPTIME_SEC=120     # wait 2 min after wake/boot
+```
+
+**2. Install the supervisor LaunchAgent**
+
+```bash
+cp com.ms-rewards.supervisor.plist.example ~/Library/LaunchAgents/com.YOURNAME.ms-rewards.supervisor.plist
+```
+
+Edit: `Label`, full path to `scripts/supervisor.sh`, `HOME`.
+
+```bash
+launchctl bootout gui/$(id -u)/com.YOURNAME.ms-rewards.supervisor 2>/dev/null || true
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.YOURNAME.ms-rewards.supervisor.plist
+```
+
+**3. Check what it would do (no run started)**
+
+```bash
+./scripts/supervisor.sh --status
+```
+
+Example: `SKIP: user idle 2400s > max 600s` or `WOULD START: console=kai idle=42s`.
+
+**State files** (gitignored under `var/`):
+
+| File | Purpose |
+|------|---------|
+| `var/state.json` | `lastCompletedDate` — at most one successful run per day |
+| `var/run.lock` | PID while `run.sh` is running |
+
+**Headed browser:** For interactive Macs, set `"headless": false` in `config.json` if you want to see the browser; `true` still works unattended.
+
+---
 
 ### Linux / Windows
 
-- Run `./run.sh` from **cron** or **Task Scheduler** at your preferred time.
-- Use the same `.env` and log path for Telegram.
+- **Fixed time:** cron / Task Scheduler → `./run.sh` or `./run-now.sh`
+- **When in use:** run `scripts/supervisor.sh` every 10–15 minutes while logged in (supervisor is macOS-only today; Linux would need different idle checks)
 
 ---
 
@@ -250,6 +301,8 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.YOURNAME.ms-rewards.
 | `npm run notify` | Send Telegram from existing log |
 | `npm run telegram:chat-id` | List chat ids after messaging your bot |
 | `npm run clear-sessions` | Delete saved browser sessions (force re-login) |
+| `./scripts/supervisor.sh` | When-awake mode: maybe start today’s run |
+| `./scripts/supervisor.sh --status` | Print skip/start reason (dry run) |
 
 Environment:
 
@@ -295,6 +348,8 @@ src/accounts.json            # Credentials (gitignored)
 src/config.json              # Settings (gitignored)
 dist/                        # Build + browser sessions (gitignored)
 com.ms-rewards.daily.plist.example
+com.ms-rewards.supervisor.plist.example
+var/                         # state.json + run.lock (supervisor mode)
 ```
 
 ---
