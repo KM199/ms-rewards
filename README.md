@@ -2,7 +2,7 @@
 
 Automated Microsoft Rewards daily tasks. Fork of [TheNetsky/Microsoft-Rewards-Script](https://github.com/TheNetsky/Microsoft-Rewards-Script) **v3.1.4** with daily-set fixes, fault-tolerant steps, search rate limiting, and a simple **Telegram** summary after each run.
 
-> **Disclaimer:** Automating Rewards may violate Microsoft’s terms. Accounts can be limited or banned. Use at your own risk.
+> **Disclaimer:** Automating Rewards may violate Microsoft's terms. Accounts can be limited or banned — this happened to my own account. Use at your own risk.
 
 ---
 

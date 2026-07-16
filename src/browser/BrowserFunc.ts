@@ -19,60 +19,85 @@ export default class BrowserFunc {
 
     /**
      * Fetch user desktop dashboard data
+     * Uses the authenticated browser page to extract the embedded dashboard object.
      * @returns {DashboardData} Object of user bing rewards dashboard data
      */
     async getDashboardData(): Promise<DashboardData> {
+        const page = this.bot.mainMobilePage
+
         try {
-            const request: AxiosRequestConfig = {
-                url: 'https://rewards.bing.com/api/getuserinfo?type=1',
-                method: 'GET',
-                headers: {
-                    ...(this.bot.fingerprint?.headers ?? {}),
-                    Cookie: this.buildCookieHeader(this.bot.cookies.mobile, [
-                        'bing.com',
-                        'live.com',
-                        'microsoftonline.com'
-                    ]),
-                    Referer: 'https://rewards.bing.com/',
-                    Origin: 'https://rewards.bing.com'
-                }
-            }
-
-            const response = await this.bot.axios.request(request)
-
-            if (response.data?.dashboard) {
-                return response.data.dashboard as DashboardData
-            }
-            throw new Error('Dashboard data missing from API response')
-        } catch (error) {
-            this.bot.logger.warn(this.bot.isMobile, 'GET-DASHBOARD-DATA', 'API failed, trying HTML fallback')
-
-            // Try using script from dashboard page
+            // Navigate to rewards home if not already there
+            let currentHostname = ''
             try {
+                currentHostname = new URL(page.url()).hostname
+            } catch {}
+
+            if (currentHostname !== 'rewards.bing.com') {
+                await page
+                    .goto(this.bot.config.baseURL, { waitUntil: 'domcontentloaded', timeout: 15000 })
+                    .catch(() => {})
+                await this.bot.utils.wait(1000)
+            } else {
+                await page.reload({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {})
+                await this.bot.utils.wait(500)
+            }
+
+            // Extract var dashboard from inline script elements (runs in browser context with auth cookies)
+            const dashboardData = await page.evaluate(() => {
+                const scripts = Array.from(document.querySelectorAll('script'))
+                const target = scripts.find(s => s.innerText.includes('var dashboard'))
+                if (!target) return null
+                const match = /var dashboard = (\{.*?\});/s.exec(target.innerText)
+                if (match?.[1]) {
+                    try {
+                        return JSON.parse(match[1])
+                    } catch {
+                        return null
+                    }
+                }
+                return null
+            })
+
+            if (dashboardData) return dashboardData as DashboardData
+
+            // Secondary fallback: full page HTML regex (handles edge cases)
+            const html = await page.content()
+            const htmlMatch = html.match(/var\s+dashboard\s*=\s*({.*?});/s)
+            if (htmlMatch?.[1]) {
+                return JSON.parse(htmlMatch[1]) as DashboardData
+            }
+
+            throw new Error('Dashboard script not found in HTML')
+        } catch (error) {
+            // Last-resort Axios API fallback (may work if browser cookies are loaded)
+            try {
+                this.bot.logger.warn(
+                    this.bot.isMobile,
+                    'GET-DASHBOARD-DATA',
+                    'Browser extraction failed, trying API fallback'
+                )
                 const request: AxiosRequestConfig = {
-                    url: this.bot.config.baseURL,
+                    url: 'https://rewards.bing.com/api/getuserinfo?type=1',
                     method: 'GET',
                     headers: {
                         ...(this.bot.fingerprint?.headers ?? {}),
-                        Cookie: this.buildCookieHeader(this.bot.cookies.mobile),
+                        Cookie: this.buildCookieHeader(this.bot.cookies.mobile, [
+                            'bing.com',
+                            'live.com',
+                            'microsoftonline.com'
+                        ]),
                         Referer: 'https://rewards.bing.com/',
                         Origin: 'https://rewards.bing.com'
                     }
                 }
-
                 const response = await this.bot.axios.request(request)
-                const match = response.data.match(/var\s+dashboard\s*=\s*({.*?});/s)
-
-                if (!match?.[1]) {
-                    throw new Error('Dashboard script not found in HTML')
+                if (response.data?.dashboard) {
+                    return response.data.dashboard as DashboardData
                 }
+            } catch {}
 
-                return JSON.parse(match[1]) as DashboardData
-            } catch (fallbackError) {
-                // If both fail
-                this.bot.logger.error(this.bot.isMobile, 'GET-DASHBOARD-DATA', 'Failed to get dashboard data')
-                throw fallbackError
-            }
+            this.bot.logger.error(this.bot.isMobile, 'GET-DASHBOARD-DATA', 'Failed to get dashboard data')
+            throw error instanceof Error ? error : new Error('Dashboard script not found in HTML')
         }
     }
 

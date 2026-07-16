@@ -220,7 +220,7 @@ export class LimitedSearchBonus extends Workers {
 
         try {
             const searchBar = '#sb_form_q'
-            const searchBox = page.locator(searchBar)
+            const searchBox = page.locator(searchBar).first()
             if (await searchBox.isVisible({ timeout: 3000 })) {
                 await this.bot.browser.utils.ghostClick(page, searchBar, { clickCount: 3 })
                 await searchBox.fill('')

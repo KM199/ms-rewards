@@ -115,7 +115,7 @@ export class SearchOnBing extends Workers {
 
                 const searchBar = '#sb_form_q'
 
-                const searchBox = page.locator(searchBar)
+                const searchBox = page.locator(searchBar).first()
                 await searchBox.waitFor({ state: 'attached', timeout: 15000 })
 
                 await this.bot.utils.wait(500)

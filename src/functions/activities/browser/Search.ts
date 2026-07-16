@@ -322,7 +322,7 @@ export class Search extends Workers {
         for (let i = 0; i < maxAttempts; i++) {
             try {
                 const searchBar = '#sb_form_q'
-                const searchBox = searchPage.locator(searchBar)
+                const searchBox = searchPage.locator(searchBar).first()
 
                 await searchPage.evaluate(() => {
                     window.scrollTo({ left: 0, top: 0, behavior: 'auto' })
